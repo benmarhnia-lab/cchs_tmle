@@ -1,0 +1,1 @@
+This directory contains codes evaluating the use of data-adaptive algorithms in doubly robust estimator (lmtp_tmle) in a low-PM2.5 setting (Canada). Please contact Chen Chen (chc048@ucsd.edu) if you have any question.
