@@ -6,10 +6,10 @@ library(data.table)
 library(dplyr)
 library(SuperLearner) ## Super Leaner wrapper
 library(lmtp) ## Longitudinal modifiable treatment policy (Diaz et al. 2021)
-library(earth)
-library(glmnet)
-library(xgboost)
-library(ranger)
+library(earth) ## multiple additive regression splines used by Nugent et al. 2023 and Rudolph et al. 2022
+library(glmnet) ## Elastic net regression, including lasso, ridge, and elastic net regularized regression
+library(xgboost) ## Extreme Gradient Boosting package
+library(ranger) ## fast implementation of Random Forest (Breiman 2001)
 
 ### dataset formatting and stage steup
 ############
@@ -42,7 +42,7 @@ ft.vb <- c("bmi5c", "smk6c", "alc6c", "fvg3c", "exc3c", "lbs3c", "edu4c",
 dt[, (ft.vb) := lapply(.SD, as.factor), .SDcol = ft.vb]
 
 ## specify time-fixed baseline variables
-basecovs <- c("yrsincan_new", "AGE_new",
+basecovs <- c("yrsincan", "age",
               "abor", "ms3c", "airsh", "urban",
               "bmi5c", "smk6c", "alc6c", "fvg3c", "exc3c",
               "lbs3c", "edu4c",
@@ -93,7 +93,7 @@ for (j in 1:length(interventions)) {
   W <- basecovs ## time-fixed baseline variables
   
   cat("variables used for each time point:", "\n")
-  print(create_node_list(A, time_points, L, W, k = Inf))
+  print(create_node_list(A, time_points, L, W, k = 1))
   
   
   ########################
@@ -114,7 +114,7 @@ for (j in 1:length(interventions)) {
   learners_trt <- "SL.glm" ## SL.glm is a main-term-only linear regression (no interactions)
   
   tmle.int <- lmtp_tmle(data = dt.n, trt = A, outcome = Y, baseline = W, time_vary = L, ## data and variables
-                        cens = C, ## when censoring exists, this must be specified, otherwise "Assertion on 'cens' failed: Must be of type 'character', not 'NULL'.", however, if I did not change the c to 0 manually, I will receive "Assertion on 'data' failed: Missing data found in treatment and/or covariate nodes for uncensored observations."
+                        cens = C, 
                         folds = 10, ## The number of folds to be used for cross-fitting
                         k = 1, ## number of historical measurements considered
                         shift = threshold_lmtp, ## A two argument function that specifies how treatment variables should be shifted.
@@ -178,7 +178,7 @@ for (j in 1:length(interventions)) {
   )
   
   tmle.int <- lmtp_tmle(data = dt.n, trt = A, outcome = Y, baseline = W, time_vary = L, ## data and variables
-                        cens = C, ## when censoring exists, this must be specified, otherwise "Assertion on 'cens' failed: Must be of type 'character', not 'NULL'.", however, if I did not change the c to 0 manually, I will receive "Assertion on 'data' failed: Missing data found in treatment and/or covariate nodes for uncensored observations."
+                        cens = C, 
                         folds = 10, ## The number of folds to be used for cross-fitting
                         k = 1, ## number of historical measurements considered
                         shift = threshold_lmtp, ## A two argument function that specifies how treatment variables should be shifted.
