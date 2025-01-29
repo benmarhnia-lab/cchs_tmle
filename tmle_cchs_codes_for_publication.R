@@ -230,3 +230,172 @@ for (j in 1:length(interventions)) {
 }
 
 ############
+
+### sensitivity analysis--hyperparameter testing
+########################
+## specifications of hyperparameters in 3 algorithms
+## testing 28 specifications (12xgboost, 4RF, 9glmnet) + (1mean, 1earth, 1glm)
+## testing hyperparameters in SL.xgboost
+## optimizing extreme gradient boosting by specifying number of trees (default 1000), 
+## maximum interaction (default 4), and shrinkage value (default 0.1)
+## 12 specifications
+xgboosting.tune <- list(ntrees = c(1000, 1500),
+                        max_depth = c(1, 4, 7),
+                        shrinkage = c(0.01, 0.1))
+
+# Set detailed names = T so we can see the configuration for each function.
+# Also shorten the name prefix.
+xgboosting.learners <- create.Learner("SL.xgboost", tune = xgboosting.tune, detailed_names = TRUE, name_prefix = "xgb")
+
+## testing hyperparameters in SL.ranger
+## optimize random forest over num.trees (depth of the tree, values that are big enough, changed to 1000 from 500)
+## and mtry (# of variables used to split the tree at each node, 0.5, 1, and 2 of the default)
+## 4 different specifications of the random forest model
+SL.rangers_1 <- function (Y, X, newX, family, obsWeights, num.trees = 1000, mtry = min(floor(sqrt(ncol(X)) * 2), ncol(X)), 
+                          write.forest = TRUE, probability = family$family == "binomial", 
+                          min.node.size = ifelse(family$family == "gaussian", 5, 1), 
+                          replace = TRUE, sample.fraction = ifelse(replace, 1, 0.632), 
+                          num.threads = 1, verbose = T, ...) 
+{
+  SuperLearner:::.SL.require("ranger")
+  if (family$family == "binomial") {
+    Y = as.factor(Y)
+  }
+  if (is.matrix(X)) {
+    X = data.frame(X)
+  }
+  fit <- ranger::ranger(`_Y` ~ ., data = cbind(`_Y` = Y, X), 
+                        num.trees = num.trees, mtry = mtry, min.node.size = min.node.size, 
+                        replace = replace, sample.fraction = sample.fraction, 
+                        case.weights = obsWeights, write.forest = write.forest, 
+                        probability = probability, num.threads = num.threads, 
+                        verbose = verbose)
+  pred <- predict(fit, data = newX)$predictions
+  if (family$family == "binomial") {
+    pred = pred[, "1"]
+  }
+  fit <- list(object = fit, verbose = verbose)
+  class(fit) <- c("SL.ranger")
+  out <- list(pred = pred, fit = fit)
+  return(out)
+}
+SL.rangers_2  <-  function(...) {
+  SL.ranger(..., num.trees = 1000)
+}
+SL.rangers_3 <- function (Y, X, newX, family, obsWeights, num.trees = 1000, mtry = max(floor(sqrt(ncol(X)) * 0.5), 1), 
+                          write.forest = TRUE, probability = family$family == "binomial", 
+                          min.node.size = ifelse(family$family == "gaussian", 5, 1), 
+                          replace = TRUE, sample.fraction = ifelse(replace, 1, 0.632), 
+                          num.threads = 1, verbose = T, ...) 
+{
+  SuperLearner:::.SL.require("ranger")
+  if (family$family == "binomial") {
+    Y = as.factor(Y)
+  }
+  if (is.matrix(X)) {
+    X = data.frame(X)
+  }
+  fit <- ranger::ranger(`_Y` ~ ., data = cbind(`_Y` = Y, X), 
+                        num.trees = num.trees, mtry = mtry, min.node.size = min.node.size, 
+                        replace = replace, sample.fraction = sample.fraction, 
+                        case.weights = obsWeights, write.forest = write.forest, 
+                        probability = probability, num.threads = num.threads, 
+                        verbose = verbose)
+  pred <- predict(fit, data = newX)$predictions
+  if (family$family == "binomial") {
+    pred = pred[, "1"]
+  }
+  fit <- list(object = fit, verbose = verbose)
+  class(fit) <- c("SL.ranger")
+  out <- list(pred = pred, fit = fit)
+  return(out)
+}
+
+## testing hyperparameters in SL.glmnet
+## optimize glmnet over alpha (default is 1, LASSO), and nlambda (default is 100)
+## 9 specifications
+glmnet.tune <- list(alpha = c(0, 0.5, 1),
+                    nlambda = c(50, 100, 150))
+
+# Set detailed names = T so we can see the configuration for each function.
+# Also shorten the name prefix.
+glmnet.learners <- create.Learner("SL.glmnet", tune = glmnet.tune, detailed_names = TRUE, name_prefix = "glmnet")
+
+
+## learners used
+learners_trt <-  learners_outcome <- c("SL.glm", ## SL.glm is a main-term-only linear regression (no interactions)
+                                       "SL.earth", ## multiple additive regression splines used by Nugent et al. 2023 and Rudolph et al. 2022
+                                       "SL.mean", ## simple mean
+                                       xgboosting.learners$names,
+                                       "SL.ranger",
+                                       "SL.rangers_1",
+                                       "SL.rangers_2",
+                                       "SL.rangers_3",
+                                       glmnet.learners$names
+)
+
+set.seed(1234)
+## runnign the model
+tmle.int <- lmtp_tmle(data = dt.n, trt = A, outcome = Y, baseline = W, time_vary = L, ## data and variables
+                      cens = C, 
+                      folds = 2, ## The number of folds to be used for cross-fitting
+                      k = 1, ## number of historical measurements considered
+                      shift = threshold_lmtp, ## A two argument function that specifies how treatment variables should be shifted.
+                      mtp = TRUE, ## Is the intervention of interest a modified treatment policy? Default is FALSE. If treatment variables are continuous this should be TRUE.
+                      outcome_type = "survival",
+                      learners_outcome = learners_outcome,
+                      learners_trt = learners_trt
+)
+saveRDS(tmle.int, file.path(outdir, paste0("tmle_cchs_cycle_", wave, "_", interventions[j], "_s5", ".rds")))
+
+print(tmle.int)
+cat("s5 weights for outcome model in intervention", interventions[j], "\n")
+print(tmle.int$fits_m)
+cat("s5 weights for density ratio in intervention", interventions[j], "\n")
+print(tmle.int$fits_r)
+
+foo <- data.frame(tidy(tmle.int))
+print(round(1000*(1-foo[, c(2, 4:5)]), digits=1))
+foo$int <- interventions[j]
+foo$time_points <- end_i
+out <- rbind(out, foo)
+foo <- numeric() 
+
+
+time1 <- Sys.time() 
+tmle.ref <- lmtp_tmle(data = dt.n, trt = A, outcome = Y, baseline = W, time_vary = L, ## data and variables
+                      cens = C,
+                      folds = 2, ## The number of folds to be used for cross-fitting
+                      k = 1, ## number of historical measurements considered
+                      shift = NULL, ## A two argument function that specifies how treatment variables should be shifted.
+                      # mtp = TRUE, ## Is the intervention of interest a modified treatment policy? Default is FALSE. If treatment variables are continuous this should be TRUE.
+                      outcome_type = "survival",
+                      learners_outcome = learners_outcome,
+                      learners_trt = learners_trt
+)
+saveRDS(tmle.ref, file.path(outdir, paste0("tmle_cchs_cycle_", wave, "_nc_s5", ".rds")))
+
+print(tmle.ref)
+cat("s5 weights for outcome model in natural course", "\n")
+print(tmle.ref$fits_m)
+cat("s5 weights for density ratio in natural course", "\n")
+print(tmle.ref$fits_r)
+
+foo <- data.frame(tidy(tmle.ref))
+print(round(1000*(1-foo[, c(2, 4:5)]), digits=1))
+foo$int <- "ref"
+foo$time_points <- end_i
+out <- rbind(out, foo)
+print(out)
+foo <- numeric()
+
+print(lmtp_contrast(tmle.ref, ref=tmle.int))
+
+foo <- lmtp_contrast(tmle.ref, ref=tmle.int)$vals
+foo$int <- interventions[j]
+foo$time_points <- end_i
+foo$method <- "lmtp_tmle with log PM and 28 specifications of six algorithms"
+bar <- rbind(bar, foo)
+print(bar)
+
+########################
